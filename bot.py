@@ -1,134 +1,137 @@
 import os
-import re
-import sqlite3
 import logging
+import threading
+from http.server import BaseHTTPRequestHandler, HTTPServer
 
 from telegram import Update
+from telegram.error import TelegramError
 from telegram.ext import (
-Application,
-CommandHandler,
-MessageHandler,
-ContextTypes,
-filters,
+    Application,
+    CommandHandler,
+    ContextTypes,
+    MessageHandler,
+    filters,
 )
 
+logging.basicConfig(
+    format="%(asctime)s | %(levelname)s | %(message)s", level=logging.INFO
+)
+log = logging.getLogger("filebot")
+
+# ---- Config (Environment Variables) ----
 BOT_TOKEN = os.environ["8914670569:AAHXATHNcKNM5VAM-dVb8VxkXvCRfdVhgW0"]
 ADMIN_ID = int(os.environ["8361587941"])
-DB_FILE = os.environ.get("DB_FILE", "files.db")
+STORAGE_CHANNEL_ID = int(os.environ["-1003934729128"])  # e.g. -1001234567890
 
-logging.basicConfig(level=logging.INFO)
-logging.getLogger("httpx").setLevel(logging.WARNING)
 
-def init_db():
-with sqlite3.connect(DB_FILE) as db:
-db.execute("""
-CREATE TABLE IF NOT EXISTS files (
-file_key TEXT PRIMARY KEY,
-chat_id INTEGER NOT NULL,
-message_id INTEGER NOT NULL
-)
-""")
+# ---- /start ----
+async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    msg = update.effective_message
+    payload = context.args[0] if context.args else None
 
-async def start(
-update: Update,
-context: ContextTypes.DEFAULT_TYPE
-):
-message = update.effective_message
-user = update.effective_user
-
-if not message or not user:
-    return
-
-if context.args:
-    key = context.args[0]
-
-    if not re.fullmatch(r"[A-Za-z0-9_-]{1,50}", key):
-        await message.reply_text("লিংকটি সঠিক নয়।")
+    # Link ছাড়া সাধারণ /start
+    if not payload:
+        text = "👋 স্বাগতম! ফাইল পেতে চ্যানেল/পোস্টের লিংকে ক্লিক করুন।"
+        if update.effective_user.id == ADMIN_ID:
+            text += (
+                "\n\n🔧 Admin: আমাকে যেকোনো ফাইল (APK, Video, PDF, ZIP...) পাঠান, "
+                "আমি তার জন্য আলাদা লিংক তৈরি করে দেব।"
+            )
+        await msg.reply_text(text)
         return
 
-    with sqlite3.connect(DB_FILE) as db:
-        row = db.execute(
-            "SELECT chat_id, message_id FROM files "
-            "WHERE file_key = ?",
-            (key,)
-        ).fetchone()
+    # Link দিয়ে এলে সরাসরি ফাইল পাঠাও
+    if not payload.startswith("f") or not payload[1:].isdigit():
+        await msg.reply_text("❌ লিংকটি সঠিক নয়।")
+        return
 
-    if row:
-        try:
-            await context.bot.copy_message(
-                chat_id=user.id,
-                from_chat_id=row[0],
-                message_id=row[1],
-                caption="",
-            )
-        except Exception:
-            logging.exception("File delivery failed")
-            await message.reply_text(
-                "ফাইল পাঠানো যায়নি। পরে আবার চেষ্টা করো।"
-            )
-    else:
-        await message.reply_text(
-            "এই ফাইলটি পাওয়া যায়নি। লিংকটি পরীক্ষা করো।"
+    file_msg_id = int(payload[1:])
+    try:
+        await context.bot.copy_message(
+            chat_id=update.effective_chat.id,
+            from_chat_id=STORAGE_CHANNEL_ID,
+            message_id=file_msg_id,
         )
-else:
-    await message.reply_text(
-        "👋 স্বাগতম!\n"
-        "Channel-এর নির্দিষ্ট Download Link দিয়ে এখানে এসো।"
+    except TelegramError as e:
+        log.warning("copy failed for %s: %s", file_msg_id, e)
+        await msg.reply_text("❌ ফাইলটি পাওয়া যায়নি বা মুছে ফেলা হয়েছে।")
+
+
+# ---- Admin: ফাইল আপলোড -> লিংক তৈরি ----
+async def admin_upload(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    msg = update.effective_message
+    try:
+        copied = await context.bot.copy_message(
+            chat_id=STORAGE_CHANNEL_ID,
+            from_chat_id=update.effective_chat.id,
+            message_id=msg.message_id,
+        )
+    except TelegramError as e:
+        await msg.reply_text(
+            f"❌ Storage channel-এ সেভ হয়নি: {e}\n"
+            "বটকে channel-এর Admin বানিয়েছেন কিনা এবং STORAGE_CHANNEL_ID ঠিক আছে কিনা দেখুন।"
+        )
+        return
+
+    link = f"https://t.me/{context.bot.username}?start=f{copied.message_id}"
+    await msg.reply_text(
+        f"✅ ফাইল সেভ হয়েছে!\n\n🔗 লিংক:\n{link}",
+        disable_web_page_preview=True,
     )
 
-async def save_file(
-update: Update,
-context: ContextTypes.DEFAULT_TYPE
-):
-message = update.effective_message
-user = update.effective_user
 
-if not message or not user or user.id != ADMIN_ID:
-    return
+async def non_admin_file(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    await update.effective_message.reply_text("⛔ শুধু Admin ফাইল আপলোড করতে পারে।")
 
-key = (message.caption or "").strip()
 
-if not re.fullmatch(r"[A-Za-z0-9_-]{1,50}", key):
-    await message.reply_text(
-        "ফাইলের Caption-এ একটি ID দাও, যেমন: file_001"
-    )
-    return
+# ---- Render-এর জন্য ছোট health server ----
+class _Health(BaseHTTPRequestHandler):
+    def do_GET(self):
+        self.send_response(200)
+        self.end_headers()
+        self.wfile.write(b"OK")
 
-with sqlite3.connect(DB_FILE) as db:
-    db.execute(
-        "INSERT OR REPLACE INTO files "
-        "(file_key, chat_id, message_id) VALUES (?, ?, ?)",
-        (key, message.chat_id, message.message_id),
-    )
+    def log_message(self, *args):
+        pass
 
-await message.reply_text(
-    "✅ ফাইল সংরক্ষিত হয়েছে!\n"
-    f"ID: {key}\n"
-    "Download link তৈরি করতে এই ID ব্যবহার করো।"
-)
+
+def start_health_server():
+    port = os.environ.get("PORT")
+    if not port:
+        return
+    server = HTTPServer(("0.0.0.0", int(port)), _Health)
+    threading.Thread(target=server.serve_forever, daemon=True).start()
+    log.info("Health server running on port %s", port)
+
 
 def main():
-init_db()
+    start_health_server()
 
-app = Application.builder().token(BOT_TOKEN).build()
+    app = Application.builder().token(BOT_TOKEN).build()
 
-app.add_handler(CommandHandler("start", start))
-
-app.add_handler(MessageHandler(
-    filters.ChatType.PRIVATE
-    & filters.CAPTION
-    & (
+    file_filter = (
         filters.Document.ALL
         | filters.VIDEO
-        | filters.PHOTO
         | filters.AUDIO
+        | filters.PHOTO
         | filters.ANIMATION
-    ),
-    save_file,
-))
+        | filters.VOICE
+    )
 
-print("Bot is running...")
-app.run_polling()
+    app.add_handler(CommandHandler("start", start))
+    app.add_handler(
+        MessageHandler(
+            file_filter & filters.User(ADMIN_ID) & filters.ChatType.PRIVATE,
+            admin_upload,
+        )
+    )
+    app.add_handler(
+        MessageHandler(file_filter & filters.ChatType.PRIVATE, non_admin_file)
+    )
 
-if name == "main":
-main()
+    log.info("Bot started")
+    app.run_polling(allowed_updates=Update.ALL_TYPES)
+
+
+if __name__ == "__main__":
+    main()
