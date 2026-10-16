@@ -19,7 +19,7 @@ logging.basicConfig(
 log = logging.getLogger("filebot")
 
 # ---- Config (Environment Variables) ----
-BOT_TOKEN = os.environ["8914670569:AAHXATHNcKNM5VAM-dVb8VxkXvCRfdVhgW0"]
+BOT_TOKEN = os.environ["8914670569:AAG_wRuEk18FBMQgUczpewWOy1w_sgjZkMg"]
 ADMIN_ID = int(os.environ["8361587941"])
 STORAGE_CHANNEL_ID = int(os.environ["-1003934729128"])  # e.g. -1001234567890
 
