@@ -13,8 +13,8 @@ from telegram.ext import (
     filters,
 )
 
-BOT_TOKEN = os.environ["BOT_TOKEN"]
-ADMIN_ID = int(os.environ["ADMIN_ID"])
+BOT_TOKEN = os.environ["8914670569:AAHXATHNcKNM5VAM-dVb8VxkXvCRfdVhgW0"]
+ADMIN_ID = int(os.environ["8361587941"])
 DB_FILE = os.environ.get("DB_FILE", "files.db")
 
 logging.basicConfig(level=logging.INFO)
