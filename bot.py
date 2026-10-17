@@ -24,9 +24,8 @@ if not BOT_TOKEN:
     print("BOT_TOKEN পাওয়া যায়নি। কাছাকাছি নামের Variable:",
           [repr(k) for k in os.environ if "BOT" in k.upper() or "TOKEN" in k.upper()])
     raise SystemExit(1)
-ADMIN_ID = int(os.environ["8361587941"])
-STORAGE_CHANNEL_ID = int(os.environ["-1003934729128"])  # e.g. -1001234567890
-
+ADMIN_ID = 8361587941
+STORAGE_CHANNEL_ID = -1003934729128
 
 # ---- /start ----
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
