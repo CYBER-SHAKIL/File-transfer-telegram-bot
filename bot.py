@@ -19,7 +19,11 @@ logging.basicConfig(
 log = logging.getLogger("filebot")
 
 # ---- Config (Environment Variables) ----
-BOT_TOKEN = os.environ["BOT_TOKEN"]
+BOT_TOKEN = os.environ.get("BOT_TOKEN")
+if not BOT_TOKEN:
+    print("BOT_TOKEN পাওয়া যায়নি। কাছাকাছি নামের Variable:",
+          [repr(k) for k in os.environ if "BOT" in k.upper() or "TOKEN" in k.upper()])
+    raise SystemExit(1)
 ADMIN_ID = int(os.environ["8361587941"])
 STORAGE_CHANNEL_ID = int(os.environ["-1003934729128"])  # e.g. -1001234567890
 
